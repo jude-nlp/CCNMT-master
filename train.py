@@ -141,6 +141,8 @@ def get_parser():
                         help="Epoch size / evaluation frequency (-1 for parallel data size)")
     parser.add_argument("--max_epoch", type=int, default=100000,
                         help="Maximum epoch size")
+    parser.add_argument("--max_steps", type=int, default=500000,
+                        help="Maximum epoch size")
     parser.add_argument("--stopping_criterion", type=str, default="",
                         help="Stopping criterion, and number of non-increase before stopping the experiment")
     parser.add_argument("--validation_metrics", type=str, default="",
@@ -211,6 +213,16 @@ def get_parser():
                         help="Multi-GPU - Local rank")
     parser.add_argument("--master_port", type=int, default=-1,
                         help="Master port (for multi-node SLURM jobs)")
+
+    # CLSR
+    parser.add_argument("--use_clsr", type=bool_flag, default=False,
+                    help="use clsr or not")
+    parser.add_argument("--ls_budget", type=float, default=0.3,
+                    help="language specific budget")
+    parser.add_argument("--gater_dim", type=int, default=128,
+                    help="gater hidden dim")
+    parser.add_argument("--max_gater_alpha", type=float, default=5.0,
+                    help="max_ ater alpha")
 
     return parser
 

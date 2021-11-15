@@ -464,12 +464,14 @@ class EncDecEvaluator(Evaluator):
             x1, len1, langs1, x2, len2, langs2, y = to_cuda(x1, len1, langs1, x2, len2, langs2, y)
 
             # encode source sentence
-            enc1 = encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            # enc1 = encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
+            enc1 = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, gater_alpha=None, clsr_lang=lang1_id, is_training=False)
             enc1 = enc1.transpose(0, 1)
             enc1 = enc1.half() if params.fp16 else enc1
 
             # decode target sentence
-            dec2 = decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1)
+            # dec2 = decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1)
+            dec2 = self.decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1, gater_alpha=None, clsr_lang=lang2_id, is_training=False)
 
             # loss
             word_scores, loss = decoder('predict', tensor=dec2, pred_mask=pred_mask, y=y, get_scores=True)

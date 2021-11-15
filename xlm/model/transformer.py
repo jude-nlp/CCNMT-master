@@ -8,6 +8,7 @@
 from logging import getLogger
 import math
 import itertools
+from re import S
 import numpy as np
 import torch
 import torch.nn as nn
@@ -235,6 +236,38 @@ class TransformerFFN(nn.Module):
         x = F.dropout(x, p=self.dropout, training=self.training)
         return x
 
+class ClsrGater(nn.Module):
+    """
+    Conditional Computational Gating Layer
+    """
+    def __init__(self, in_dim, middle_dim):
+        super().__init__()
+        self.lin1 = Linear(in_dim, middle_dim)
+        self.lin2 = Linear(middle_dim, 1)
+        self.act = F.relu
+        self.sig = torch.nn.Sigmoid()
+
+    def forward(self, input, alpha, is_training):
+        x = self.lin1(input)
+        x = self.act(x)
+        x = self.lin2(x)
+        if not is_training:
+            return x
+        x = x + alpha * torch.randn(x.size()).cuda()
+        x = self.sig(x)
+        return x
+
+class ClsrModule(nn.Module):
+    """
+    conditional language-specific routing
+    """
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.lin = Linear(in_dim, out_dim)
+
+    def forward(self, input):
+        x = self.lin(input)
+        return x
 
 class TransformerModel(nn.Module):
 
@@ -283,12 +316,23 @@ class TransformerModel(nn.Module):
 
         # transformer layers
         self.attentions = nn.ModuleList()
+        self.gaters1 = nn.ModuleList()
         self.layer_norm1 = nn.ModuleList()
         self.ffns = nn.ModuleList()
+        self.gaters2 = nn.ModuleList()
         self.layer_norm2 = nn.ModuleList()
         if self.is_decoder:
             self.layer_norm15 = nn.ModuleList()
+            self.gaters15 = nn.ModuleList()
             self.encoder_attn = nn.ModuleList()
+        
+        # CLSR layers
+        # language specific
+        self.clsr_ls = nn.ModuleList()
+        for _ in range(len(params.lang2id)):
+            self.clsr_ls.append(ClsrModule(self.dim, self.dim))
+        # language shared
+        self.clsr_shared = ClsrModule(self.dim, self.dim)
 
         # memories
         self.memories = nn.ModuleDict()
@@ -301,14 +345,17 @@ class TransformerModel(nn.Module):
 
         for layer_id in range(self.n_layers):
             self.attentions.append(MultiHeadAttention(self.n_heads, self.dim, dropout=self.attention_dropout))
+            self.gaters1.append(ClsrGater(self.dim, params.gater_dim))
             self.layer_norm1.append(nn.LayerNorm(self.dim, eps=1e-12))
             if self.is_decoder:
                 self.layer_norm15.append(nn.LayerNorm(self.dim, eps=1e-12))
+                self.gaters15.append(ClsrGater(self.dim, params.gater_dim))
                 self.encoder_attn.append(MultiHeadAttention(self.n_heads, self.dim, dropout=self.attention_dropout))
             if ('%i_in' % layer_id) in self.memories:
                 self.ffns.append(None)
             else:
                 self.ffns.append(TransformerFFN(self.dim, self.hidden_dim, self.dim, dropout=self.dropout, gelu_activation=params.gelu_activation))
+            self.gaters2.append(ClsrGater(self.dim, params.gater_dim))
             self.layer_norm2.append(nn.LayerNorm(self.dim, eps=1e-12))
 
         # output layer
@@ -329,7 +376,7 @@ class TransformerModel(nn.Module):
         else:
             raise Exception("Unknown mode: %s" % mode)
 
-    def fwd(self, x, lengths, causal, src_enc=None, src_len=None, positions=None, langs=None, cache=None):
+    def fwd(self, x, lengths, causal, gater_alpha, clsr_lang, is_training=True, src_enc=None, src_len=None, positions=None, langs=None, cache=None):
         """
         Inputs:
             `x` LongTensor(slen, bs), containing word indices
@@ -388,28 +435,59 @@ class TransformerModel(nn.Module):
         tensor = F.dropout(tensor, p=self.dropout, training=self.training)
         tensor *= mask.unsqueeze(-1).to(tensor.dtype)
 
+        # ls budget: language specific computation
+        if is_training:
+            ls_cmput = torch.Tensor([0]).cuda()
+            all_cmput = torch.Tensor([0]).cuda()
+
         # transformer layers
         for i in range(self.n_layers):
 
             # self attention
             attn = self.attentions[i](tensor, attn_mask, cache=cache)
             attn = F.dropout(attn, p=self.dropout, training=self.training)
-            tensor = tensor + attn
+            gate1 = self.gaters1[i](attn, gater_alpha, is_training)
+            if not is_training:
+                gate1 = (gate1 >= 0).float()
+            clsr1 = self.clsr_ls[clsr_lang](attn) * gate1 + self.clsr_shared(attn) * (1 - gate1)
+            tensor = tensor + clsr1
             tensor = self.layer_norm1[i](tensor)
+            if is_training:
+                ls_cmput += sum(sum(gate1))[0]
+                all_cmput += sum(lengths)   # 这里需要打印出来看看
+
 
             # encoder attention (for decoder only)
             if self.is_decoder and src_enc is not None:
                 attn = self.encoder_attn[i](tensor, src_mask, kv=src_enc, cache=cache)
                 attn = F.dropout(attn, p=self.dropout, training=self.training)
-                tensor = tensor + attn
+                gate15 = self.gaters15[i](attn, gater_alpha, is_training)
+                if not is_training:
+                    gate15 = (gate15 >= 0).float()
+                clsr15 = self.clsr_ls[clsr_lang](attn) * gate15 + self.clsr_shared(attn) * (1 - gate15)
+                # tensor = tensor + attn
+                tensor = tensor + clsr15
                 tensor = self.layer_norm15[i](tensor)
+                if is_training:
+                    ls_cmput += sum(sum(gate15))[0]
+                    all_cmput += sum(lengths)
 
             # FFN
             if ('%i_in' % i) in self.memories:
                 tensor = tensor + self.memories['%i_in' % i](tensor)
             else:
-                tensor = tensor + self.ffns[i](tensor)
+                ffn = self.ffns[i](tensor)
+                gate2 = self.gaters2[i](ffn, gater_alpha, is_training)
+                if not is_training:
+                    gate2 = (gate2 >= 0).float()
+                clsr2 = self.clsr_ls[clsr_lang](attn) * gate2 + self.clsr_shared(attn) * (1 - gate2)
+                # tensor = tensor + self.ffns[i](tensor)
+                tensor = tensor + clsr2
+
             tensor = self.layer_norm2[i](tensor)
+            if is_training:
+                ls_cmput += sum(sum(gate2))[0]
+                all_cmput += sum(lengths)
 
             # memory
             if ('%i_after' % i) in self.memories:
@@ -424,8 +502,10 @@ class TransformerModel(nn.Module):
 
         # move back sequence length to dimension 0
         tensor = tensor.transpose(0, 1)
-
-        return tensor
+        if is_training:
+            return tensor, ls_cmput, all_cmput
+        else:
+            return tensor
 
     def predict(self, tensor, pred_mask, y, get_scores):
         """
@@ -485,7 +565,7 @@ class TransformerModel(nn.Module):
         while cur_len < max_len:
 
             # compute word scores
-            tensor = self.forward(
+            tensor= self.forward(
                 'fwd',
                 x=generated[:cur_len],
                 lengths=gen_len,
@@ -494,7 +574,10 @@ class TransformerModel(nn.Module):
                 causal=True,
                 src_enc=src_enc,
                 src_len=src_len,
-                cache=cache
+                cache=cache,
+                clsr_lang=tgt_lang_id,
+                is_training=False,
+                gater_alpha=None
             )
             assert tensor.size() == (1, bs, self.dim), (cur_len, max_len, src_enc.size(), tensor.size(), (1, bs, self.dim))
             tensor = tensor.data[-1, :, :].type_as(src_enc)  # (bs, dim)
