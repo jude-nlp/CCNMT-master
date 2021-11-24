@@ -846,6 +846,10 @@ class EncDecTrainer(Trainer):
         # cuda
         x1, len1, langs1, x2, len2, langs2, y = to_cuda(x1, len1, langs1, x2, len2, langs2, y)
 
+        # logger.info("x1: {}".format(x1))
+        # logger.info("len1: {}".format(len1))
+        # import sys
+        # sys.exit(1)
         # gater alpha
         global_step = self.n_total_iter
         _alpha = (global_step * params.max_gater_alpha) / params.max_steps
@@ -853,20 +857,23 @@ class EncDecTrainer(Trainer):
 
         # encode source sentence
         # enc1 = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
-        enc1, ls_comput_enc, all_comput_enc = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, gater_alpha=gater_alpha, clsr_lang=lang1_id, is_training=True)
+        enc1, ls_comput_enc, ds_comput_enc, all_comput_enc = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, gater_alpha=gater_alpha, clsr_lang=lang1_id, is_training=True)
         enc1 = enc1.transpose(0, 1)
 
         # decode target sentence
-        dec2, ls_comput_dec, all_comput_dec = self.decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1, gater_alpha=gater_alpha, clsr_lang=lang2_id, is_training=True)
+        dec2, ls_comput_dec, ds_comput_dec, all_comput_dec = self.decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1, gater_alpha=gater_alpha, clsr_lang=lang2_id, is_training=True)
 
         # clsr budget loss
-        ls_loss = torch.abs((ls_comput_enc + ls_comput_dec) / (all_comput_enc + all_comput_dec + 1e-8) - params.ls_budget)
-
+        ls_loss = torch.abs((ls_comput_enc + ls_comput_dec) / (all_comput_enc + all_comput_dec + 1e-8) - params.lang_budget)
+        ds_loss = torch.abs((ds_comput_enc + ds_comput_dec) / (all_comput_enc + all_comput_dec + 1e-8) - params.domain_budget)
         # mt loss
         _, mt_loss = self.decoder('predict', tensor=dec2, pred_mask=pred_mask, y=y, get_scores=False)
 
         # total loss
-        total_loss = ls_loss + mt_loss
+        if params.use_lang_clsr or params.use_domian_clsr:
+            total_loss = ls_loss + ds_loss + mt_loss
+        else:
+            total_loss = mt_loss
         self.stats[('AE-%s' % lang1) if lang1 == lang2 else ('MT-%s-%s' % (lang1, lang2))].append(total_loss.item())
         loss = lambda_coeff * total_loss + 0 * sum(p.sum() for p in self.encoder.parameters()) + 0 * sum(p.sum() for p in self.decoder.parameters())
 

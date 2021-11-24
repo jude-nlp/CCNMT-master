@@ -141,7 +141,7 @@ def get_parser():
                         help="Epoch size / evaluation frequency (-1 for parallel data size)")
     parser.add_argument("--max_epoch", type=int, default=100000,
                         help="Maximum epoch size")
-    parser.add_argument("--max_steps", type=int, default=500000,
+    parser.add_argument("--max_steps", type=int, default=50000,
                         help="Maximum epoch size")
     parser.add_argument("--stopping_criterion", type=str, default="",
                         help="Stopping criterion, and number of non-increase before stopping the experiment")
@@ -215,14 +215,22 @@ def get_parser():
                         help="Master port (for multi-node SLURM jobs)")
 
     # CLSR
-    parser.add_argument("--use_clsr", type=bool_flag, default=False,
-                    help="use clsr or not")
-    parser.add_argument("--ls_budget", type=float, default=0.3,
-                    help="language specific budget")
     parser.add_argument("--gater_dim", type=int, default=128,
                     help="gater hidden dim")
     parser.add_argument("--max_gater_alpha", type=float, default=5.0,
                     help="max_ ater alpha")
+    # CLSR langs
+    parser.add_argument("--use_lang_clsr", type=bool_flag, default=False,
+                    help="use lang clsr or not")
+    parser.add_argument("--lang_budget", type=float, default=0.3,
+                    help="language specific budget")
+    # CLSR domains
+    parser.add_argument("--dms", type=str, default="",
+                        help="Domains (dm1-dm2-dm3 .. ex: laws-news-TED)")
+    parser.add_argument("--use_domain_clsr", type=bool_flag, default=False,
+                    help="use domain clsr or not")
+    parser.add_argument("--domain_budget", type=float, default=0.3,
+                    help="domian specific budget")
 
     return parser
 

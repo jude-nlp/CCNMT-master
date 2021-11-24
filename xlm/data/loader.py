@@ -241,6 +241,11 @@ def check_data_params(params):
     params.lang2id = {k: v for v, k in params.id2lang.items()}
     params.n_langs = len(params.langs)
 
+    # check domains
+    params.domains = params.dms.split('-')
+    assert len(params.domains) == len(set(params.domains)) >= 1
+    params.n_domains = len(params.langs)
+
     # CLM steps
     clm_steps = [s.split('-') for s in params.clm_steps.split(',') if len(s) > 0]
     params.clm_steps = [(s[0], None) if len(s) == 1 else tuple(s) for s in clm_steps]
