@@ -15,7 +15,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils import clip_grad_norm_
-import apex
 
 from .optim import get_optimizer
 from .utils import to_cuda, concat_batches, find_modules
@@ -774,7 +773,7 @@ class Trainer(object):
         pred = F.linear(h, emb[CLF_ID1].unsqueeze(0), emb[CLF_ID2, 0])
         loss = F.binary_cross_entropy_with_logits(pred.view(-1), y.to(pred.device).type_as(pred))
         self.stats['PC-%s-%s' % (lang1, lang2)].append(loss.item())
-        loss = lambda_coeff * loss
+        loss = lambda_coeff * loss 
 
         # optimize
         self.optimize(loss)
@@ -857,7 +856,7 @@ class EncDecTrainer(Trainer):
         # loss
         _, loss = self.decoder('predict', tensor=dec2, pred_mask=pred_mask, y=y, get_scores=False)
         self.stats[('AE-%s' % lang1) if lang1 == lang2 else ('MT-%s-%s' % (lang1, lang2))].append(loss.item())
-        loss = lambda_coeff * loss
+        loss = lambda_coeff * loss +  0 * sum(p.sum() for p in self.encoder.parameters())
 
         # optimize
         self.optimize(loss)
