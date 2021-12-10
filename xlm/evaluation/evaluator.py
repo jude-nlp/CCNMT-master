@@ -460,18 +460,21 @@ class EncDecEvaluator(Evaluator):
             y = x2[1:].masked_select(pred_mask[:-1])
             assert len(y) == (len2 - 1).sum().item()
 
+            # domain
+            clsr_domain = x1[1] - 14
+
             # cuda
-            x1, len1, langs1, x2, len2, langs2, y = to_cuda(x1, len1, langs1, x2, len2, langs2, y)
+            x1, len1, langs1, x2, len2, langs2, y, clsr_domain = to_cuda(x1, len1, langs1, x2, len2, langs2, y, clsr_domain)
 
             # encode source sentence
             # enc1 = encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False)
-            enc1 = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, gater_alpha=None, clsr_lang=lang1_id, is_training=False)
+            enc1 = self.encoder('fwd', x=x1, lengths=len1, langs=langs1, causal=False, gater_alpha=None, clsr_lang=lang1_id, clsr_domain=clsr_domain, is_training=False)
             enc1 = enc1.transpose(0, 1)
             enc1 = enc1.half() if params.fp16 else enc1
 
             # decode target sentence
             # dec2 = decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1)
-            dec2 = self.decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1, gater_alpha=None, clsr_lang=lang2_id, is_training=False)
+            dec2 = self.decoder('fwd', x=x2, lengths=len2, langs=langs2, causal=True, src_enc=enc1, src_len=len1, gater_alpha=None, clsr_lang=lang2_id, clsr_domain=clsr_domain, is_training=False)
 
             # loss
             word_scores, loss = decoder('predict', tensor=dec2, pred_mask=pred_mask, y=y, get_scores=True)
@@ -488,7 +491,7 @@ class EncDecEvaluator(Evaluator):
             if eval_bleu:
                 max_len = int(1.5 * len1.max().item() + 10)
                 if params.beam_size == 1:
-                    generated, lengths = decoder.generate(enc1, len1, lang2_id, max_len=max_len)
+                    generated, lengths = decoder.generate(enc1, len1, lang2_id, clsr_domain=clsr_domain, max_len=max_len)
                 else:
                     generated, lengths = decoder.generate_beam(
                         enc1, len1, lang2_id, beam_size=params.beam_size,

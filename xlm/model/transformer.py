@@ -259,9 +259,9 @@ class ClsrGater(nn.Module):
         return x
 
 
-class ClsrModule(nn.Module):
+class ClsrShared(nn.Module):
     """
-    conditional language-specific routing
+    conditional language-shared routing
     """
     def __init__(self, in_dim, out_dim):
         super().__init__()
@@ -270,6 +270,24 @@ class ClsrModule(nn.Module):
     def forward(self, input):
         x = self.lin(input)
         return x
+
+class ClsrSpec(nn.Module):
+    """
+    conditional language/domain specific routing
+    """
+    def __init__(self, n_lang, dim) -> None:
+        super().__init__()
+        self.spec = nn.Parameter(torch.FloatTensor(n_lang, dim, dim))
+        nn.init.xavier_uniform_(self.spec)
+
+    def forward(self, x, lang_idx):
+        """
+        x: input tensor of [slen, bs, dim]
+        lang_idx: lang tensor of [bs]
+        """
+        # w = self.spec[lang_idx]
+        o = torch.einsum("bsi,bij->bsj", x, self.spec[lang_idx].transpose(1, 2))
+        return o
 
 class TransformerModel(nn.Module):
 
@@ -334,20 +352,20 @@ class TransformerModel(nn.Module):
             self.lang_gaters2 = nn.ModuleList()
             if self.is_decoder:
                 self.lang_gaters15 = nn.ModuleList()
-            self.lang_clsr_ls = nn.ModuleList()     # language specific
-            for _ in range(len(params.lang2id)):
-                self.lang_clsr_ls.append(ClsrModule(self.dim, self.dim))
-            self.lang_clsr_shared = ClsrModule(self.dim, self.dim)
+            # self.lang_spec = ClsrSpec(params.n_langs, self.dim)           # language specific
+            # 因为 ClsrSpec 的实现方式会减慢训练速度，而语言这部分语料暂时不必混合，所以，可以直接用这个模块代替。
+            self.lang_spec = nn.ModuleList()
+            for _ in range(params.n_langs):
+                self.lang_spec.append(ClsrShared(self.dim, self.dim) )
+            self.lang_shared = ClsrShared(self.dim, self.dim)
 
         if params.use_domain_clsr:
             self.domain_gaters1 = nn.ModuleList()
             self.domain_gaters2 = nn.ModuleList()
             if self.is_decoder:
                 self.domain_gaters15 = nn.ModuleList()
-            self.domain_clsr_ds = nn.ModuleList()   # domain specific
-            for _ in range(params.n_domains):
-                self.domain_clsr_ds.append(ClsrModule(self.dim, self.dim))
-            self.domain_clsr_shared = ClsrModule(self.dim, self.dim)
+            self.domain_spec = ClsrSpec(params.n_domains, self.dim)       # domain specific
+            self.domain_shared = ClsrShared(self.dim, self.dim)
 
         # memories
         self.memories = nn.ModuleDict()
@@ -370,12 +388,12 @@ class TransformerModel(nn.Module):
                 self.ffns.append(TransformerFFN(self.dim, self.hidden_dim, self.dim, dropout=self.dropout, gelu_activation=params.gelu_activation))
             self.layer_norm2.append(nn.LayerNorm(self.dim, eps=1e-12))
             # CLSR
-            if params.use_lang_clsr:
+            if params.use_lang_clsr and layer_id == self.n_layers - 1:
                 self.lang_gaters1.append(ClsrGater(self.dim, params.gater_dim))
                 self.lang_gaters2.append(ClsrGater(self.dim, params.gater_dim))
                 if self.is_decoder:
                     self.lang_gaters15.append(ClsrGater(self.dim, params.gater_dim))
-            if params.use_domain_clsr:
+            if params.use_domain_clsr and layer_id == self.n_layers - 1:
                 self.domain_gaters1.append(ClsrGater(self.dim, params.gater_dim))
                 self.domain_gaters2.append(ClsrGater(self.dim, params.gater_dim))
                 if self.is_decoder:
@@ -407,6 +425,7 @@ class TransformerModel(nn.Module):
             `causal` Boolean, if True, the attention is only done over previous hidden states
             `positions` LongTensor(slen, bs), containing word positions
             `langs` LongTensor(slen, bs), containing language IDs
+            `clsr_domain` LongTensor(bs) containing the domain id of each sentence
         """
         # lengths = (x != self.pad_index).float().sum(dim=1)
         # mask = x != self.pad_index
@@ -458,44 +477,51 @@ class TransformerModel(nn.Module):
         tensor = F.dropout(tensor, p=self.dropout, training=self.training)
         tensor *= mask.unsqueeze(-1).to(tensor.dtype)
 
-        # ls budget: language specific computation
+        # ls budget: language/domain specific computation
         ls_cmput = torch.Tensor([0]).cuda()
         ds_cmput = torch.Tensor([0]).cuda()
         all_cmput = torch.Tensor([0]).cuda()
-
         # transformer layers
         for i in range(self.n_layers):
 
             # self attention
             attn = self.attentions[i](tensor, attn_mask, cache=cache)
             attn = F.dropout(attn, p=self.dropout, training=self.training)
-            if self.params.use_lang_clsr and not self.params.use_domain_clsr:   # CLSR multi-lingual
-                gate1 = self.lang_gaters1[i](attn, gater_alpha, is_training)
-                # gate1 = self.lang_gaters1[i](tensor, gater_alpha, is_training)    # 修复 BUG: attn -> tensor
+            if i == self.n_layers - 1 and self.params.use_lang_clsr and not self.params.use_domain_clsr:   # CLSR multi-lingual
+                # gate1 = self.lang_gaters1[i](attn, gater_alpha, is_training)
+                gate1 = self.lang_gaters1[-1](tensor, gater_alpha, is_training)    # 修复 BUG: attn -> tensor
                 if not is_training:
                     gate1 = (gate1 >= 0).float()
-                clsr1 = self.lang_clsr_ls[clsr_lang](attn) * gate1 + self.lang_clsr_shared(attn) * (1 - gate1)
+                spec = self.lang_spec[clsr_lang](attn)
+                shared = self.lang_shared(attn)
+                clsr1 = spec * gate1 + shared * (1 - gate1)
                 tensor = tensor + clsr1
                 ls_cmput += sum(sum(gate1))[0]
                 all_cmput += sum(lengths)
-            elif self.params.use_domain_clsr and not self.params.use_lang_clsr: # CLSR multi-domian
-                gate1 = self.domain_gaters1[i](attn, gater_alpha, is_training)
+            elif i == self.n_layers - 1 and self.params.use_domain_clsr and not self.params.use_lang_clsr: # CLSR multi-domian
+                gate1 = self.domain_gaters1[-1](tensor, gater_alpha, is_training)
                 if not is_training:
                     gate1 = (gate1 >= 0).float()
-                clsr1 = self.domain_clsr_ds[clsr_domain](attn) * gate1 + self.domain_clsr_shared(attn) * (1 - gate1)
+                spec = self.domain_spec(attn, clsr_domain)
+                shared = self.domain_shared(attn)
+                clsr1 = spec * gate1 + shared * (1 - gate1)
                 tensor = tensor + clsr1
                 ds_cmput += sum(sum(gate1))[0]
                 all_cmput += sum(lengths)
-            elif self.params.use_domain_clsr and self.params.use_lang_clsr:     #  CLSR multi-domian and multi-lingual
-                lang_gate1 = self.lang_gaters1[i](attn, gater_alpha, is_training)
+            elif i == self.n_layers - 1 and self.params.use_domain_clsr and self.params.use_lang_clsr:     #  CLSR multi-domian and multi-lingual
+                # Language 
+                lang_gate1 = self.lang_gaters1[-1](tensor, gater_alpha, is_training)
                 if not is_training:
                     lang_gate1 = (lang_gate1 >= 0).float()
-                lang_clsr1 = self.lang_clsr_ls[clsr_lang](attn) * lang_gate1 + self.lang_clsr_shared(attn) * (1 - lang_gate1)
-                # tensor = tensor + lang_clsr1 这里要不要加残差和LN呢？？？
-                domain_gate1 = self.domain_gaters1[i](lang_clsr1, gater_alpha, is_training)
+                lang_clsr1 = self.lang_spec[clsr_lang](attn) * lang_gate1 + self.lang_shared(attn) * (1 - lang_gate1)
+                # Domain
+                domain_gate1 = self.domain_gaters1[-1](tensor, gater_alpha, is_training)
                 if not is_training:
                     domain_gate1 = (domain_gate1 >= 0).float()
-                domain_clsr1 = self.domain_clsr_ds[clsr_domain](lang_clsr1) * domain_gate1 + self.domain_clsr_shared(lang_clsr1) * (1 - domain_gate1)
+                spec = self.domain_spec(lang_clsr1, clsr_domain)
+                shared = self.domain_shared(lang_clsr1)
+                domain_clsr1 = spec * domain_gate1 + shared * (1 - domain_gate1)
+                # Add
                 tensor = tensor + domain_clsr1
                 ls_cmput += sum(sum(lang_gate1))[0]
                 ds_cmput += sum(sum(domain_gate1))[0]
@@ -508,32 +534,40 @@ class TransformerModel(nn.Module):
             if self.is_decoder and src_enc is not None:
                 attn = self.encoder_attn[i](tensor, src_mask, kv=src_enc, cache=cache)
                 attn = F.dropout(attn, p=self.dropout, training=self.training)
-                if self.params.use_lang_clsr and not self.params.use_domain_clsr:   # CLSR mnulti-lingual
-                    gate15 = self.lang_gaters15[i](tensor, gater_alpha, is_training)
+                if i == self.n_layers - 1 and self.params.use_lang_clsr and not self.params.use_domain_clsr:   # CLSR mnulti-lingual
+                    gate15 = self.lang_gaters15[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         gate15 = (gate15 >= 0).float()
-                    clsr15 = self.lang_clsr_ls[clsr_lang](attn) * gate15 + self.lang_clsr_shared(attn) * (1 - gate15)
+                    spec = self.lang_spec[clsr_lang](attn)
+                    shared = self.lang_shared(attn)
+                    clsr15 = spec * gate15 + shared * (1 - gate15)
                     tensor = tensor + clsr15
                     ls_cmput += sum(sum(gate15))[0]
                     all_cmput += sum(lengths)
-                elif self.params.use_domain_clsr and not self.params.use_lang_clsr: # CLSR multi-domian
-                    gate15 = self.domain_gaters15[i](attn, gater_alpha, is_training)
+                elif i == self.n_layers - 1 and self.params.use_domain_clsr and not self.params.use_lang_clsr: # CLSR multi-domian
+                    gate15 = self.domain_gaters15[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         gate15 = (gate15 >= 0).float()
-                    clsr15 = self.domain_clsr_ds[clsr_domain](attn) * gate15 + self.domain_clsr_shared(attn) * (1 - gate15)
+                    spec = self.domain_spec(attn, clsr_domain)
+                    shared = self.domain_shared(attn)
+                    clsr15 = spec * gate15 + shared * (1 - gate15)
                     tensor = tensor + clsr15
                     ds_cmput += sum(sum(gate15))[0]
                     all_cmput += sum(lengths)
-                elif self.params.use_domain_clsr and self.params.use_lang_clsr:     #  CLSR multi-domian and multi-lingual
-                    lang_gate15 = self.lang_gaters15[i](attn, gater_alpha, is_training)
+                elif i == self.n_layers - 1 and self.params.use_domain_clsr and self.params.use_lang_clsr:     #  CLSR multi-domian and multi-lingual
+                    # Language
+                    lang_gate15 = self.lang_gaters15[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         lang_gate15 = (lang_gate15 >= 0).float()
-                    lang_clsr15 = self.lang_clsr_ls[clsr_lang](attn) * lang_gate15 + self.lang_clsr_shared(attn) * (1 - lang_gate15)
-                    # tensor = tensor + lang_clsr1 这里要不要加残差和LN呢？？？
-                    domain_gate15 = self.domain_gaters15[i](lang_clsr15, gater_alpha, is_training)
+                    lang_clsr15 = self.lang_spec[clsr_lang](attn) * lang_gate15 + self.lang_shared(attn) * (1 - lang_gate15)
+                    # Domain
+                    domain_gate15 = self.domain_gaters15[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         domain_gate15 = (domain_gate15 >= 0).float()
-                    domain_clsr15 = self.domain_clsr_ds[clsr_domain](lang_clsr15) * domain_gate15 + self.domain_clsr_shared(lang_clsr15) * (1 - domain_gate15)
+                    spec = self.domain_spec(lang_clsr15, clsr_domain)
+                    shared = self.domain_shared(lang_clsr15)
+                    domain_clsr15 = spec * domain_gate15 + shared * (1 - domain_gate15)
+                    # Add
                     tensor = tensor + domain_clsr15
                     ls_cmput += sum(sum(lang_gate15))[0]
                     ds_cmput += sum(sum(domain_gate15))[0]
@@ -547,32 +581,39 @@ class TransformerModel(nn.Module):
                 tensor = tensor + self.memories['%i_in' % i](tensor)
             else:
                 ffn = self.ffns[i](tensor)
-                if self.params.use_lang_clsr and not self.params.use_domain_clsr:   # CLSR multi-lingual
-                    gate2 = self.lang_gaters2[i](ffn, gater_alpha, is_training)
+                if i == self.n_layers - 1 and self.params.use_lang_clsr and not self.params.use_domain_clsr:   # CLSR multi-lingual
+                    gate2 = self.lang_gaters2[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         gate2 = (gate2 >= 0).float()
-                    clsr2 = self.lang_clsr_ls[clsr_lang](ffn) * gate2 + self.lang_clsr_shared(ffn) * (1 - gate2)
+                    spec = self.lang_spec[clsr_lang](ffn)
+                    shared = self.lang_shared(ffn)
+                    clsr2 = spec * gate2 + shared * (1 - gate2)
                     tensor = tensor + clsr2
                     ls_cmput += sum(sum(gate2))[0]
                     all_cmput += sum(lengths)
-                elif self.params.use_domain_clsr and not self.params.use_lang_clsr: # CLSR multi-domian
-                    gate2 = self.domain_gaters2[i](ffn, gater_alpha, is_training)
+                elif i == self.n_layers - 1 and self.params.use_domain_clsr and not self.params.use_lang_clsr: # CLSR multi-domian
+                    gate2 = self.domain_gaters2[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         gate2 = (gate2 >= 0).float()
-                    clsr2 = self.domain_clsr_ds[clsr_domain](ffn) * gate2 + self.domain_clsr_shared(ffn) * (1 - gate2)
+                    spec = self.domain_spec(ffn, clsr_domain)
+                    shared = self.domain_shared(ffn)
+                    clsr2 = spec * gate2 + shared * (1 - gate2)
                     tensor = tensor + clsr2
                     ds_cmput += sum(sum(gate2))[0]
                     all_cmput += sum(lengths)
-                elif self.params.use_domain_clsr and self.params.use_lang_clsr:     #  CLSR multi-domian and multi-lingual
-                    lang_gate2 = self.lang_gaters2[i](ffn, gater_alpha, is_training)
+                elif i == self.n_layers - 1 and self.params.use_domain_clsr and self.params.use_lang_clsr:     #  CLSR multi-domian and multi-lingual
+                    # Language
+                    lang_gate2 = self.lang_gaters2[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         lang_gate2 = (lang_gate2 >= 0).float()
-                    lang_clsr2 = self.lang_clsr_ls[clsr_lang](ffn) * lang_gate2 + self.lang_clsr_shared(ffn) * (1 - lang_gate2)
-                    # tensor = tensor + lang_clsr1 这里要不要加残差和LN呢？？？
-                    domain_gate2 = self.domain_gaters2[i](lang_clsr2, gater_alpha, is_training)
+                    lang_clsr2 = self.lang_spec[clsr_lang](ffn) * lang_gate2 + self.lang_shared(ffn) * (1 - lang_gate2)
+                    # Domain
+                    domain_gate2 = self.domain_gaters2[-1](tensor, gater_alpha, is_training)
                     if not is_training:
                         domain_gate2 = (domain_gate2 >= 0).float()
-                    domain_clsr2 = self.domain_clsr_ds[clsr_domain](lang_clsr2) * domain_gate2 + self.domain_clsr_shared(lang_clsr2) * (1 - domain_gate2)
+                    spec = self.domain_spec(lang_clsr2, clsr_domain)
+                    shared = self.domain_shared(lang_clsr2)
+                    domain_clsr2 = spec * domain_gate2 + shared * (1 - domain_gate2)
                     tensor = tensor + domain_clsr2
                     ls_cmput += sum(sum(lang_gate2))[0]
                     ds_cmput += sum(sum(domain_gate2))[0]
@@ -612,7 +653,7 @@ class TransformerModel(nn.Module):
         scores, loss = self.pred_layer(masked_tensor, y, get_scores)
         return scores, loss
 
-    def generate(self, src_enc, src_len, tgt_lang_id, max_len=200, sample_temperature=None):
+    def generate(self, src_enc, src_len, tgt_lang_id, clsr_domain, max_len=200, sample_temperature=None):
         """
         Decode a sentence given initial start.
         `x`:
@@ -669,6 +710,7 @@ class TransformerModel(nn.Module):
                 src_len=src_len,
                 cache=cache,
                 clsr_lang=tgt_lang_id,
+                clsr_domain=clsr_domain,
                 is_training=False,
                 gater_alpha=None
             )

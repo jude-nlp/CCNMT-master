@@ -243,7 +243,8 @@ def check_data_params(params):
 
     # check domains
     params.domains = params.dms.split('-')
-    assert len(params.domains) == len(set(params.domains)) >= 1
+    if params.use_domain_clsr:
+        assert len(params.domains) == len(set(params.domains)) >= 1
     params.n_domains = len(params.langs)
 
     # CLM steps

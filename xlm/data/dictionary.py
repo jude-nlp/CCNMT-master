@@ -25,6 +25,9 @@ SPECIAL_WORDS = 10
 SEP_WORD = SPECIAL_WORD % 0
 MASK_WORD = SPECIAL_WORD % 1
 
+# Multi-Domain
+DOMAIN_COUNT = 10    # 假设 10 个 domain
+TO_DOMAIN = 'TO_DOMAIN%i'
 
 class Dictionary(object):
 
@@ -76,12 +79,13 @@ class Dictionary(object):
         assert self.pad_index == 2
         assert self.unk_index == 3
         assert all(self.id2word[4 + i] == SPECIAL_WORD % i for i in range(SPECIAL_WORDS))
+        assert all(self.id2word[4 + SPECIAL_WORDS + i] == TO_DOMAIN % i for i in range(DOMAIN_COUNT))
         assert len(self.id2word) == len(self.word2id) == len(self.counts)
         assert set(self.word2id.keys()) == set(self.counts.keys())
         for i in range(len(self.id2word)):
             assert self.word2id[self.id2word[i]] == i
         last_count = 1e18
-        for i in range(4 + SPECIAL_WORDS, len(self.id2word) - 1):
+        for i in range(4 + SPECIAL_WORDS + DOMAIN_COUNT, len(self.id2word) - 1):
             count = self.counts[self.id2word[i]]
             assert count <= last_count
             last_count = count
@@ -131,6 +135,8 @@ class Dictionary(object):
         word2id = {BOS_WORD: 0, EOS_WORD: 1, PAD_WORD: 2, UNK_WORD: 3}
         for i in range(SPECIAL_WORDS):
             word2id[SPECIAL_WORD % i] = 4 + i
+        for i in range(DOMAIN_COUNT):
+            word2id[TO_DOMAIN % i] = 4 + SPECIAL_WORDS + i
         counts = {k: 0 for k in word2id.keys()}
         f = open(vocab_path, 'r', encoding='utf-8')
         for i, line in enumerate(f):
@@ -152,7 +158,7 @@ class Dictionary(object):
                 skipped += 1
                 print('Empty word at line %s with count %s' % (i, line))
                 continue
-            word2id[line[0]] = 4 + SPECIAL_WORDS + i - skipped  # shift because of extra words
+            word2id[line[0]] = 4 + SPECIAL_WORDS + DOMAIN_COUNT + i - skipped  # shift because of extra words
             counts[line[0]] = int(line[1])
         f.close()
         id2word = {v: k for k, v in word2id.items()}
