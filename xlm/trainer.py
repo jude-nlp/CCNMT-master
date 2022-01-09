@@ -552,8 +552,12 @@ class Trainer(object):
                         logger.warning(f"No 'num_updates' for optimizer {name}.")
                         continue
                     logger.warning(f"Reloading 'num_updates' and 'lr' for optimizer {name}.")
-                    param_group['num_updates'] = data[f'{name}_optimizer']['param_groups'][group_id]['num_updates']
-                    param_group['lr'] = self.optimizers[name].get_lr_for_step(param_group['num_updates'])
+                    # 临时这么写
+                    if self.params.reload_checkpoint == '':
+                        param_group['num_updates'] = data[f'{name}_optimizer']['param_groups'][group_id]['num_updates']
+                        param_group['lr'] = self.optimizers[name].get_lr_for_step(param_group['num_updates'])
+                    else:
+                        logger.warning(f"No num_updates and  lr")
 
         # reload main metrics
         self.epoch = data['epoch'] + 1

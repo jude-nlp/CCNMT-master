@@ -127,20 +127,23 @@ fi
 # check valid and test files are here
 if ! [[ -f "$PARA_SRC_TRAIN_RAW" ]]; then echo "$PARA_SRC_TRAIN_RAW is not found!"; exit; fi
 if ! [[ -f "$PARA_TGT_TRAIN_RAW" ]]; then echo "$PARA_TGT_TRAIN_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_SRC_VALID_RAW" ]]; then echo "$PARA_SRC_VALID_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_TGT_VALID_RAW" ]]; then echo "$PARA_TGT_VALID_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_SRC_TEST_RAW" ]];  then echo "$PARA_SRC_TEST_RAW is not found!";  exit; fi
-if ! [[ -f "$PARA_TGT_TEST_RAW" ]];  then echo "$PARA_TGT_TEST_RAW is not found!";  exit; fi
 
 echo "Tokenizing train data..."
 eval "cat $PARA_SRC_TRAIN_RAW | $SRC_PREPROCESSING > $PARA_SRC_TRAIN"
 eval "cat $PARA_TGT_TRAIN_RAW | $TGT_PREPROCESSING > $PARA_TGT_TRAIN"
 
+# check valid and test files are here
+if ! [[ -f "$PARA_SRC_VALID_RAW.sgm" ]]; then echo "$PARA_SRC_VALID_RAW.sgm is not found!"; exit; fi
+if ! [[ -f "$PARA_TGT_VALID_RAW.sgm" ]]; then echo "$PARA_TGT_VALID_RAW.sgm is not found!"; exit; fi
+if ! [[ -f "$PARA_SRC_TEST_RAW.sgm" ]];  then echo "$PARA_SRC_TEST_RAW.sgm is not found!";  exit; fi
+if ! [[ -f "$PARA_TGT_TEST_RAW.sgm" ]];  then echo "$PARA_TGT_TEST_RAW.sgm is not found!";  exit; fi
+
 echo "Tokenizing valid and test data..."
-eval "cat $PARA_SRC_VALID_RAW | $SRC_PREPROCESSING > $PARA_SRC_VALID"  # Update 下同
-eval "cat $PARA_TGT_VALID_RAW | $TGT_PREPROCESSING > $PARA_TGT_VALID"
-eval "cat $PARA_SRC_TEST_RAW | $SRC_PREPROCESSING > $PARA_SRC_TEST"
-eval "cat $PARA_TGT_TEST_RAW | $TGT_PREPROCESSING > $PARA_TGT_TEST"
+eval "$INPUT_FROM_SGM < $PARA_SRC_VALID_RAW.sgm | $SRC_PREPROCESSING > $PARA_SRC_VALID"
+eval "$INPUT_FROM_SGM < $PARA_TGT_VALID_RAW.sgm | $TGT_PREPROCESSING > $PARA_TGT_VALID"
+eval "$INPUT_FROM_SGM < $PARA_SRC_TEST_RAW.sgm  | $SRC_PREPROCESSING > $PARA_SRC_TEST"
+eval "$INPUT_FROM_SGM < $PARA_TGT_TEST_RAW.sgm  | $TGT_PREPROCESSING > $PARA_TGT_TEST"
+
 
 # clean data $TMP/train.$SRC.tok
 perl $CLEAN -ratio 1.5 $TMP/train.tok $SRC $TGT $TMP/train.tok.clean 1 250
