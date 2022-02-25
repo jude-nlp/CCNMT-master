@@ -74,8 +74,6 @@ FASTBPE=$TOOLS_PATH/fastBPE/fast
 
 # BPE / vocab files 
 BPE_CODES=$PROC_PATH/codes
-SRC_VOCAB=$PROC_PATH/vocab.$SRC
-TGT_VOCAB=$PROC_PATH/vocab.$TGT
 FULL_VOCAB=$PROC_PATH/vocab.$SRC-$TGT
 
 # train / valid / test parallel BPE data
@@ -111,11 +109,15 @@ PARA_TGT_TRAIN_CLEAN=$TMP/train.tok.clean.$TGT
 # preprocessing commands - special case for Romanian
 if [ "$SRC" == "ro" ]; then
   SRC_PREPROCESSING="$REPLACE_UNICODE_PUNCT | $NORM_PUNC -l $SRC | $REM_NON_PRINT_CHAR | $NORMALIZE_ROMANIAN | $REMOVE_DIACRITICS | $TOKENIZER -l $SRC -no-escape -threads $N_THREADS"
+elif [ "$SRC" == "zh" ]; then
+  SRC_PREPROCESSING="$REPLACE_UNICODE_PUNCT | $NORM_PUNC -l $SRC | $REM_NON_PRINT_CHAR"
 else
   SRC_PREPROCESSING="$REPLACE_UNICODE_PUNCT | $NORM_PUNC -l $SRC | $REM_NON_PRINT_CHAR |                                            $TOKENIZER -l $SRC -no-escape -threads $N_THREADS"
 fi
 if [ "$TGT" == "ro" ]; then
   TGT_PREPROCESSING="$REPLACE_UNICODE_PUNCT | $NORM_PUNC -l $TGT | $REM_NON_PRINT_CHAR | $NORMALIZE_ROMANIAN | $REMOVE_DIACRITICS | $TOKENIZER -l $TGT -no-escape -threads $N_THREADS"
+elif [ "$TGT" == "zh" ]; then
+  TGT_PREPROCESSING="$REPLACE_UNICODE_PUNCT | $NORM_PUNC -l $TGT | $REM_NON_PRINT_CHAR"
 else
   TGT_PREPROCESSING="$REPLACE_UNICODE_PUNCT | $NORM_PUNC -l $TGT | $REM_NON_PRINT_CHAR |                                            $TOKENIZER -l $TGT -no-escape -threads $N_THREADS"
 fi
@@ -123,23 +125,26 @@ fi
 # check valid and test files are here
 if ! [[ -f "$PARA_SRC_TRAIN_RAW" ]]; then echo "$PARA_SRC_TRAIN_RAW is not found!"; exit; fi
 if ! [[ -f "$PARA_TGT_TRAIN_RAW" ]]; then echo "$PARA_TGT_TRAIN_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_SRC_VALID_RAW" ]]; then echo "$PARA_SRC_VALID_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_TGT_VALID_RAW" ]]; then echo "$PARA_TGT_VALID_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_SRC_TEST_RAW" ]];  then echo "$PARA_SRC_TEST_RAW is not found!";  exit; fi
-if ! [[ -f "$PARA_TGT_TEST_RAW" ]];  then echo "$PARA_TGT_TEST_RAW is not found!";  exit; fi
 
 echo "Tokenizing train data..."
 eval "cat $PARA_SRC_TRAIN_RAW | $SRC_PREPROCESSING > $PARA_SRC_TRAIN"
 eval "cat $PARA_TGT_TRAIN_RAW | $TGT_PREPROCESSING > $PARA_TGT_TRAIN"
 
+# check valid and test files are here
+if ! [[ -f "$PARA_SRC_VALID_RAW" ]]; then echo "$PARA_SRC_VALID_RAW.sgm is not found!"; exit; fi
+if ! [[ -f "$PARA_TGT_VALID_RAW" ]]; then echo "$PARA_TGT_VALID_RAW.sgm is not found!"; exit; fi
+if ! [[ -f "$PARA_SRC_TEST_RAW" ]];  then echo "$PARA_SRC_TEST_RAW.sgm is not found!";  exit; fi
+if ! [[ -f "$PARA_TGT_TEST_RAW" ]];  then echo "$PARA_TGT_TEST_RAW.sgm is not found!";  exit; fi
+
 echo "Tokenizing valid and test data..."
-eval "cat $PARA_SRC_VALID_RAW | $SRC_PREPROCESSING > $PARA_SRC_VALID"  # Update 下同
-eval "cat $PARA_TGT_VALID_RAW | $TGT_PREPROCESSING > $PARA_TGT_VALID"
-eval "cat $PARA_SRC_TEST_RAW | $SRC_PREPROCESSING > $PARA_SRC_TEST"
-eval "cat $PARA_TGT_TEST_RAW | $TGT_PREPROCESSING > $PARA_TGT_TEST"
+eval "$INPUT_FROM_SGM < $PARA_SRC_VALID_RAW | $SRC_PREPROCESSING > $PARA_SRC_VALID"
+eval "$INPUT_FROM_SGM < $PARA_TGT_VALID_RAW | $TGT_PREPROCESSING > $PARA_TGT_VALID"
+eval "$INPUT_FROM_SGM < $PARA_SRC_TEST_RAW  | $SRC_PREPROCESSING > $PARA_SRC_TEST"
+eval "$INPUT_FROM_SGM < $PARA_TGT_TEST_RAW  | $TGT_PREPROCESSING > $PARA_TGT_TEST"
+
 
 # clean data $TMP/train.$SRC.tok
-perl $CLEAN -ratio 1.5 $TMP/train.tok $SRC $TGT $TMP/train.tok.clean 1 260
+perl $CLEAN -ratio 1.5 $TMP/train.tok $SRC $TGT $TMP/train.tok.clean 1 350
 
 # reload BPE codes
 cd $MAIN_PATH

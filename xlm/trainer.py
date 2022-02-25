@@ -585,7 +585,7 @@ class Trainer(object):
             if factor * scores[metric] > factor * self.best_metrics[metric]:
                 self.best_metrics[metric] = scores[metric]
                 logger.info('New best score for %s: %.6f' % (metric, scores[metric]))
-                self.save_checkpoint('best-%s' % metric, include_optimizers=False)
+                self.save_checkpoint('best-%s' % metric, include_optimizers=True)
 
     def end_epoch(self, scores):
         """

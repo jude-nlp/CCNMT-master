@@ -260,6 +260,7 @@ class TransformerModel(nn.Module):
         self.id2lang = params.id2lang
         self.lang2id = params.lang2id
         self.use_lang_emb = getattr(params, 'use_lang_emb', True)
+        self.remove_residual = params.remove_residual
         assert len(self.dico) == self.n_words
         assert len(self.id2lang) == len(self.lang2id) == self.n_langs
 
@@ -394,7 +395,11 @@ class TransformerModel(nn.Module):
             # self attention
             attn = self.attentions[i](tensor, attn_mask, cache=cache)
             attn = F.dropout(attn, p=self.dropout, training=self.training)
-            tensor = tensor + attn
+            # remove residual connection
+            if self.remove_residual and self.is_encoder and (i == self.n_layers - 2):
+                tensor = attn
+            else:
+                tensor = tensor + attn
             tensor = self.layer_norm1[i](tensor)
 
             # encoder attention (for decoder only)

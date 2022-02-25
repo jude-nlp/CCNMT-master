@@ -51,6 +51,9 @@ def get_parser():
     parser.add_argument("--src_lang", type=str, default="", help="Source language")
     parser.add_argument("--tgt_lang", type=str, default="", help="Target language")
 
+    # remove residual
+    parser.add_argument("--remove_residual", type=bool_flag, default=False, help="remove residual connection")
+
     return parser
 
 
@@ -74,8 +77,15 @@ def main(params):
     dico = Dictionary(reloaded['dico_id2word'], reloaded['dico_word2id'], reloaded['dico_counts'])
     encoder = TransformerModel(model_params, dico, is_encoder=True, with_output=True).cuda().eval()
     decoder = TransformerModel(model_params, dico, is_encoder=False, with_output=True).cuda().eval()
-    encoder.load_state_dict(reloaded['encoder'])
-    decoder.load_state_dict(reloaded['decoder'])
+    enc_reload = reloaded['encoder']
+    if all([k.startswith('module.') for k in enc_reload.keys()]):
+        enc_reload = {k[len('module.'):]: v for k, v in enc_reload.items()}
+    encoder.load_state_dict(enc_reload)
+    dec_reload = reloaded['decoder']
+    if all([k.startswith('module.') for k in dec_reload.keys()]):
+        dec_reload = {k[len('module.'):]: v for k, v in dec_reload.items()}
+    decoder.load_state_dict(dec_reload)
+
     params.src_id = model_params.lang2id[params.src_lang]
     params.tgt_id = model_params.lang2id[params.tgt_lang]
 

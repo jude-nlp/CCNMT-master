@@ -211,6 +211,10 @@ def get_parser():
                         help="Multi-GPU - Local rank")
     parser.add_argument("--master_port", type=int, default=-1,
                         help="Master port (for multi-node SLURM jobs)")
+    
+    # remove residual
+    parser.add_argument("--remove_residual", type=bool_flag, default=False,
+                        help="remove residual connection")
 
     return parser
 
