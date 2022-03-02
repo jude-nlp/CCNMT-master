@@ -268,7 +268,10 @@ class TransformerModel(nn.Module):
         self.dim = params.emb_dim       # 512 by default
         self.hidden_dim = self.dim * 4  # 2048 by default
         self.n_heads = params.n_heads   # 8 by default
-        self.n_layers = params.n_layers
+        if self.is_encoder:
+            self.n_layers = params.n_enc_layers
+        else:
+            self.n_layers = params.n_dec_layers
         self.dropout = params.dropout
         self.attention_dropout = params.attention_dropout
         assert self.dim % self.n_heads == 0, 'transformer dim must be a multiple of n_heads'

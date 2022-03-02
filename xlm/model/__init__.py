@@ -10,7 +10,7 @@ import os
 import torch
 
 from .pretrain import load_embeddings
-from .transformer import DECODER_ONLY_PARAMS, TransformerModel  # , TRANSFORMER_LAYER_PARAMS
+from .transformer import DECODER_ONLY_PARAMS, TRANSFORMER_LAYER_PARAMS, TransformerModel  # , TRANSFORMER_LAYER_PARAMS
 from .memory import HashingMemory
 
 
@@ -161,6 +161,11 @@ def build_model(params, dico):
                 enc_reload = enc_reload['model' if 'model' in enc_reload else 'encoder']
                 if all([k.startswith('module.') for k in enc_reload.keys()]):
                     enc_reload = {k[len('module.'):]: v for k, v in enc_reload.items()}
+                for i in range(params.n_enc_layers):
+                    for name in TRANSFORMER_LAYER_PARAMS:
+                        if name % i not in enc_reload:
+                            logger.warning("Parameter %s not found." % (name % i))
+                            enc_reload[name % i] = encoder.state_dict()[name % i]
                 encoder.load_state_dict(enc_reload)
 
             # reload decoder
@@ -170,7 +175,7 @@ def build_model(params, dico):
                 dec_reload = dec_reload['model' if 'model' in dec_reload else 'decoder']
                 if all([k.startswith('module.') for k in dec_reload.keys()]):
                     dec_reload = {k[len('module.'):]: v for k, v in dec_reload.items()}
-                for i in range(params.n_layers):
+                for i in range(params.n_dec_layers):
                     for name in DECODER_ONLY_PARAMS:
                         if name % i not in dec_reload:
                             logger.warning("Parameter %s not found." % (name % i))
@@ -181,5 +186,30 @@ def build_model(params, dico):
         logger.debug("Decoder: {}".format(decoder))
         logger.info("Number of parameters (encoder): %i" % sum([p.numel() for p in encoder.parameters() if p.requires_grad]))
         logger.info("Number of parameters (decoder): %i" % sum([p.numel() for p in decoder.parameters() if p.requires_grad]))
+
+        # 冻结参数
+        # 依据指定超参数冻结
+        if params.freeze_encoder_layer_num != -1:
+            for k, p in encoder.named_parameters():
+                # logger.info("%s:%s" % (k, p.requires_grad))
+                split = k.split('.')
+                # if split[0] == 'position_embeddings' or split[0] == 'lang_embeddings' or split[0] == 'embeddings' or split[0] == 'layer_norm_emb': # 冻结Embedding层
+                #     p.requires_grad = False
+                    # continue
+                if len(split[1]) == 1 and int(split[1]) < params.freeze_encoder_layer_num:
+                # if len(split[1]) == 1 and int(split[1]) in [0, 1, 2, 3, 5]:
+                    p.requires_grad = False
+            # logger.info("after set encoder requires_grad to False")
+            # for k, p in encoder.named_parameters():
+            #     logger.info("%s:%s" % (k, p.requires_grad))
+        if params.freeze_decoder_layer_num != -1:
+            for k, p in decoder.named_parameters():
+                # logger.info("%s:%s" % (k, p.requires_grad))
+                split = k.split('.')
+                if len(split[1]) == 1 and int(split[1]) < params.freeze_decoder_layer_num:
+                    p.requires_grad = False
+            # logger.info("after set decoder requires_grad to False")
+            # for k, p in decoder.named_parameters():
+            #     logger.info("%s:%s" % (k, p.requires_grad))
 
         return encoder.cuda(), decoder.cuda()

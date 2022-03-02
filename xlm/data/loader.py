@@ -168,7 +168,7 @@ def load_para_data(params, data):
     """
     data['para'] = {}
 
-    required_para_train = set(params.clm_steps + params.mlm_steps + params.pc_steps + params.mt_steps)
+    required_para_train = set(params.clm_steps + params.mlm_steps + params.align_steps + params.pc_steps + params.mt_steps)
 
     for src, tgt in params.para_dataset.keys():
 
@@ -253,6 +253,12 @@ def check_data_params(params):
     assert all([(l1 in params.langs) and (l2 in params.langs or l2 is None) for l1, l2 in params.mlm_steps])
     assert len(params.mlm_steps) == len(set(params.mlm_steps))
 
+    # align steps
+    align_steps = [s.split('-') for s in params.align_steps.split(',') if len(s) > 0]
+    params.align_steps = [tuple(s) for s in align_steps]
+    assert all([(l1 in params.langs) and (l2 in params.langs or l2 is None) for l1, l2 in params.align_steps])
+    assert len(params.align_steps) == len(set(params.align_steps))
+
     # parallel classification steps
     params.pc_steps = [tuple(s.split('-')) for s in params.pc_steps.split(',') if len(s) > 0]
     assert all([len(x) == 2 for x in params.pc_steps])
@@ -298,7 +304,7 @@ def check_data_params(params):
     assert all([all([os.path.isfile(p) for p in paths.values()]) for paths in params.mono_dataset.values()])
 
     # check parallel datasets
-    required_para_train = set(params.clm_steps + params.mlm_steps + params.pc_steps + params.mt_steps)
+    required_para_train = set(params.clm_steps + params.mlm_steps + params.align_steps + params.pc_steps + params.mt_steps)
     required_para = required_para_train | set([(l2, l3) for _, l2, l3 in params.bt_steps])
     params.para_dataset = {
         (src, tgt): {

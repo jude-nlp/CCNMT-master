@@ -117,6 +117,7 @@ class Trainer(object):
             [('MLM-%s' % l, []) for l in params.langs] +
             [('MLM-%s-%s' % (l1, l2), []) for l1, l2 in data['para'].keys()] +
             [('MLM-%s-%s' % (l2, l1), []) for l1, l2 in data['para'].keys()] +
+            [('ALIGN-%s-%s' % (l1, l2), []) for l1, l2 in data['para'].keys()] +
             [('PC-%s-%s' % (l1, l2), []) for l1, l2 in params.pc_steps] +
             [('AE-%s' % lang, []) for lang in params.ae_steps] +
             [('MT-%s-%s' % (l1, l2), []) for l1, l2 in params.mt_steps] +
@@ -783,6 +784,52 @@ class Trainer(object):
         self.stats['processed_s'] += bs
         self.stats['processed_w'] += lengths.sum().item()
 
+    def align_step(self, lang1, lang2, lambda_coeff):
+        """
+        Aligning Known Translation Pairs
+        """
+        assert lambda_coeff >= 0
+        if lambda_coeff == 0:
+            return
+        params = self.params
+        name = 'model' if params.encoder_only else 'encoder'
+        model = getattr(self, name)
+        model.train()
+
+        # generate batch
+        (x1, len1), (x2, len2) = self.get_batch('mt', lang1, lang2)
+
+        # cuda
+        x1, len1, x2, len2 = to_cuda(x1, len1, x2, len2)
+
+        # encode source sentence
+        enc1 = model('fwd', x=x1, lengths=len1, langs=None, causal=False)
+        enc1 = enc1.transpose(0, 1)
+
+        # encode target sentence
+        enc2 = model('fwd', x=x2, lengths=len2, langs=None, causal=False)
+        enc2 = enc2.transpose(0, 1)
+
+        # max pooling
+        max_pool1 = torch.nn.MaxPool2d((len(enc1[0]),1), stride=1)
+        max_pool2 = torch.nn.MaxPool2d((len(enc2[0]),1), stride=1)
+        enc1 = max_pool1(enc1).squeeze()
+        enc2 = max_pool2(enc2).squeeze()
+
+        # 计算 cosine 相似度
+        sim = torch.cosine_similarity(enc1, enc2, dim=1)
+        loss = 1 - sim.mean()
+        loss = lambda_coeff * loss + 0 * sum(p.sum() for p in model.parameters())
+        
+        self.stats[('ALIGN-%s-%s' % (lang1, lang2))].append(loss.item())
+
+        # optimize
+        self.optimize(loss)
+
+        # number of processed sentences / words
+        self.n_sentences += params.batch_size
+        self.stats['processed_s'] += len2.size(0)
+        self.stats['processed_w'] += (len2 - 1).sum().item()
 
 class SingleTrainer(Trainer):
 
