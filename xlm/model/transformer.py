@@ -447,7 +447,7 @@ class TransformerModel(nn.Module):
         scores, loss = self.pred_layer(masked_tensor, y, get_scores)
         return scores, loss
 
-    def generate(self, src_enc, src_len, tgt_lang_id, max_len=200, sample_temperature=None):
+    def generate(self, src_enc, src_len, src_lang_id, tgt_lang_id, max_len=200, sample_temperature=None, add_domain_tag=False):
         """
         Decode a sentence given initial start.
         `x`:
@@ -464,6 +464,7 @@ class TransformerModel(nn.Module):
             - lang_id if only one language is involved (LM)
             - (lang_id1, lang_id2) if two languages are involved (MT)
         """
+        lang_tag = {"lw":"[LAWS]", "nw":"[NEWS]", "sp":"[SPOKEN]", "th":"[THESIS]", "td":"[TED]"}
 
         # input batch
         bs = len(src_len)
@@ -483,12 +484,42 @@ class TransformerModel(nn.Module):
         langs = langs.unsqueeze(1).expand(max_len, bs)
 
         # current position / max lengths / length of generated sentences / unfinished sentences
-        cur_len = 1
-        gen_len = src_len.clone().fill_(1)
+        if add_domain_tag:
+            cur_len = 2
+            gen_len = src_len.clone().fill_(2)
+        else:
+            cur_len = 1
+            gen_len = src_len.clone().fill_(1)
+
         unfinished_sents = src_len.clone().fill_(1)
 
         # cache compute states
         cache = {'slen': 0}
+
+        # fill language TAG
+        if add_domain_tag:
+            if self.id2lang[tgt_lang_id] == "en":
+                # x-en
+                lang = self.id2lang[src_lang_id]
+            else:
+                # en-x
+                lang = self.id2lang[tgt_lang_id]
+            tag = lang_tag[lang]
+            word_id = self.dico.word2id[tag]
+            generated[1].fill_(word_id)
+
+        # debug
+        # logger.info("lang:{}".format(lang))
+        # logger.info("tag:{}".format(tag))
+        # logger.info("word_id:{}".format(word_id))
+        # logger.info("generated:{}, size:{}".format(generated, generated.size()))
+        # logger.info("positions:{}, size:{}".format(positions, positions.size()))
+        # logger.info("langs:{}, size:{}".format(langs, langs.size()))
+        # logger.info("src_len:{}, size:{}".format(src_len, src_len.size()))
+        # logger.info("gen_len:{}, size:{}".format(gen_len, gen_len.size()))
+        # logger.info("unfinished_sents:{}, size:{}".format(unfinished_sents, unfinished_sents.size()))
+        # import sys
+        # sys.exit(1)
 
         while cur_len < max_len:
 
@@ -504,10 +535,10 @@ class TransformerModel(nn.Module):
                 src_len=src_len,
                 cache=cache
             )
-            assert tensor.size() == (1, bs, self.dim), (cur_len, max_len, src_enc.size(), tensor.size(), (1, bs, self.dim))
+            # logger.info("return tensor.size:{}".format(tensor.size()))
+            # assert tensor.size() == (1, bs, self.dim), (cur_len, max_len, src_enc.size(), tensor.size(), (1, bs, self.dim))
             tensor = tensor.data[-1, :, :].type_as(src_enc)  # (bs, dim)
             scores = self.pred_layer.get_scores(tensor)      # (bs, n_words)
-
             # select next words: sample or greedy
             if sample_temperature is None:
                 next_words = torch.topk(scores, 1)[1].squeeze(1)
@@ -520,6 +551,10 @@ class TransformerModel(nn.Module):
             gen_len.add_(unfinished_sents)
             unfinished_sents.mul_(next_words.ne(self.eos_index).long())
             cur_len = cur_len + 1
+
+            # logger.info("cur_len:{}".format(cur_len))
+            # logger.info("generated size:{}".format(generated.size()))
+            # logger.info("generated[:cur_len]:{}".format(generated[:cur_len].size()))
 
             # stop when there is a </s> in each sentence, or if we exceed the maximul length
             if unfinished_sents.max() == 0:

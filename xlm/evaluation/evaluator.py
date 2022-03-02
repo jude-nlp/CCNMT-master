@@ -136,7 +136,7 @@ class Evaluator(object):
             _lang1, _lang2 = (lang1, lang2) if lang1 < lang2 else (lang2, lang1)
             iterator = self.data['para'][(_lang1, _lang2)][data_set].get_iterator(
                 shuffle=False,
-                group_by_size=True,
+                group_by_size=False,
                 n_sentences=n_sentences
             )
 
@@ -249,6 +249,10 @@ class Evaluator(object):
                 if len(_mlm_mono) > 0:
                     scores['%s_mlm_ppl' % data_set] = np.mean([scores['%s_%s_mlm_ppl' % (data_set, lang)] for lang in _mlm_mono])
                     scores['%s_mlm_acc' % data_set] = np.mean([scores['%s_%s_mlm_acc' % (data_set, lang)] for lang in _mlm_mono])
+                _mt_para = params.mt_steps
+                if len(_mt_para) > 0:
+                    scores['%s_mt_ppl' % data_set] = np.mean([scores['%s_%s-%s_mt_ppl' % (data_set, lang1, lang2)] for lang1, lang2 in _mt_para])
+                    scores['%s_mt_bleu' % data_set] = np.mean([scores['%s_%s-%s_mt_bleu' % (data_set, lang1, lang2)] for lang1, lang2 in _mt_para])
 
         return scores
 
@@ -486,7 +490,7 @@ class EncDecEvaluator(Evaluator):
             if eval_bleu:
                 max_len = int(1.5 * len1.max().item() + 10)
                 if params.beam_size == 1:
-                    generated, lengths = decoder.generate(enc1, len1, lang2_id, max_len=max_len)
+                    generated, lengths = decoder.generate(enc1, len1, lang1_id, lang2_id, max_len=max_len, add_domain_tag=params.add_domain_tag)
                 else:
                     generated, lengths = decoder.generate_beam(
                         enc1, len1, lang2_id, beam_size=params.beam_size,

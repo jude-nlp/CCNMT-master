@@ -7,7 +7,10 @@
 
 import json
 import random
+import torch
 import argparse
+
+import numpy as np
 
 from xlm.slurm import init_signal_handler, init_distributed_mode
 from xlm.data.loader import check_data_params, load_data
@@ -17,6 +20,12 @@ from xlm.model.memory import HashingMemory
 from xlm.trainer import SingleTrainer, EncDecTrainer
 from xlm.evaluation.evaluator import SingleEvaluator, EncDecEvaluator
 
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
 
 def get_parser():
     """
@@ -230,6 +239,9 @@ def get_parser():
     parser.add_argument("--freeze_encoder_layer_num", type=int, default=-1,
                         help="freeze encoder n layers")
 
+    # generate variety space
+    parser.add_argument("--add_domain_tag", type=bool_flag, default=False,
+                        help="add_domain_tag in decoder)")
     return parser
 
 
@@ -329,6 +341,9 @@ def main(params):
 
 
 if __name__ == '__main__':
+
+    # set up seed
+    setup_seed(202112)
 
     # generate parser / parse parameters
     parser = get_parser()

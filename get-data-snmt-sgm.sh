@@ -127,23 +127,26 @@ fi
 # check valid and test files are here
 if ! [[ -f "$PARA_SRC_TRAIN_RAW" ]]; then echo "$PARA_SRC_TRAIN_RAW is not found!"; exit; fi
 if ! [[ -f "$PARA_TGT_TRAIN_RAW" ]]; then echo "$PARA_TGT_TRAIN_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_SRC_VALID_RAW" ]]; then echo "$PARA_SRC_VALID_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_TGT_VALID_RAW" ]]; then echo "$PARA_TGT_VALID_RAW is not found!"; exit; fi
-if ! [[ -f "$PARA_SRC_TEST_RAW" ]];  then echo "$PARA_SRC_TEST_RAW is not found!";  exit; fi
-if ! [[ -f "$PARA_TGT_TEST_RAW" ]];  then echo "$PARA_TGT_TEST_RAW is not found!";  exit; fi
 
 echo "Tokenizing train data..."
 eval "cat $PARA_SRC_TRAIN_RAW | $SRC_PREPROCESSING > $PARA_SRC_TRAIN"
 eval "cat $PARA_TGT_TRAIN_RAW | $TGT_PREPROCESSING > $PARA_TGT_TRAIN"
 
+# check valid and test files are here
+if ! [[ -f "$PARA_SRC_VALID_RAW.sgm" ]]; then echo "$PARA_SRC_VALID_RAW.sgm is not found!"; exit; fi
+if ! [[ -f "$PARA_TGT_VALID_RAW.sgm" ]]; then echo "$PARA_TGT_VALID_RAW.sgm is not found!"; exit; fi
+if ! [[ -f "$PARA_SRC_TEST_RAW.sgm" ]];  then echo "$PARA_SRC_TEST_RAW.sgm is not found!";  exit; fi
+if ! [[ -f "$PARA_TGT_TEST_RAW.sgm" ]];  then echo "$PARA_TGT_TEST_RAW.sgm is not found!";  exit; fi
+
 echo "Tokenizing valid and test data..."
-eval "cat $PARA_SRC_VALID_RAW | $SRC_PREPROCESSING > $PARA_SRC_VALID"  # Update 下同
-eval "cat $PARA_TGT_VALID_RAW | $TGT_PREPROCESSING > $PARA_TGT_VALID"
-eval "cat $PARA_SRC_TEST_RAW | $SRC_PREPROCESSING > $PARA_SRC_TEST"
-eval "cat $PARA_TGT_TEST_RAW | $TGT_PREPROCESSING > $PARA_TGT_TEST"
+eval "$INPUT_FROM_SGM < $PARA_SRC_VALID_RAW.sgm | $SRC_PREPROCESSING > $PARA_SRC_VALID"
+eval "$INPUT_FROM_SGM < $PARA_TGT_VALID_RAW.sgm | $TGT_PREPROCESSING > $PARA_TGT_VALID"
+eval "$INPUT_FROM_SGM < $PARA_SRC_TEST_RAW.sgm  | $SRC_PREPROCESSING > $PARA_SRC_TEST"
+eval "$INPUT_FROM_SGM < $PARA_TGT_TEST_RAW.sgm  | $TGT_PREPROCESSING > $PARA_TGT_TEST"
+
 
 # clean data $TMP/train.$SRC.tok
-perl $CLEAN -ratio 1.5 $TMP/train.tok $SRC $TGT $TMP/train.tok.clean 1 260
+perl $CLEAN -ratio 1.5 $TMP/train.tok $SRC $TGT $TMP/train.tok.clean 1 250
 
 # reload BPE codes
 cd $MAIN_PATH
@@ -171,29 +174,29 @@ $FASTBPE applybpe $PARA_TGT_TEST_BPE  $PARA_TGT_TEST  $BPE_CODES
 
 echo "Done"
 
-echo "Binarizing data..."
-rm -f $PARA_SRC_TRAIN_BPE.pth $PARA_TGT_TRAIN_BPE.pth $PARA_SRC_VALID_BPE.pth $PARA_TGT_VALID_BPE.pth $PARA_SRC_TEST_BPE.pth $PARA_TGT_TEST_BPE.pth     # Update
-echo "Binarizing train data..."
-$MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_SRC_TRAIN_BPE    # Update
-$MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_TGT_TRAIN_BPE    # Update
-echo "Binarizing test data..."
-$MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_SRC_VALID_BPE
-$MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_TGT_VALID_BPE
-$MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_SRC_TEST_BPE
-$MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_TGT_TEST_BPE
+# echo "Binarizing data..."
+# rm -f $PARA_SRC_TRAIN_BPE.pth $PARA_TGT_TRAIN_BPE.pth $PARA_SRC_VALID_BPE.pth $PARA_TGT_VALID_BPE.pth $PARA_SRC_TEST_BPE.pth $PARA_TGT_TEST_BPE.pth     # Update
+# echo "Binarizing train data..."
+# $MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_SRC_TRAIN_BPE    # Update
+# $MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_TGT_TRAIN_BPE    # Update
+# echo "Binarizing test data..."
+# $MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_SRC_VALID_BPE
+# $MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_TGT_VALID_BPE
+# $MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_SRC_TEST_BPE
+# $MAIN_PATH/preprocess.py $FULL_VOCAB $PARA_TGT_TEST_BPE
 
-
+#
 # Summary
-
-echo ""
-echo "===== Data summary"
-echo "Parallel training data:"
-echo "    $SRC: $PARA_SRC_TRAIN_BPE.pth"
-echo "    $TGT: $PARA_TGT_TRAIN_BPE.pth"
-echo "Parallel validation data:"
-echo "    $SRC: $PARA_SRC_VALID_BPE.pth"
-echo "    $TGT: $PARA_TGT_VALID_BPE.pth"
-echo "Parallel test data:"
-echo "    $SRC: $PARA_SRC_TEST_BPE.pth"
-echo "    $TGT: $PARA_TGT_TEST_BPE.pth"
-echo ""
+#
+# echo ""
+# echo "===== Data summary"
+# echo "Parallel training data:"
+# echo "    $SRC: $PARA_SRC_TRAIN_BPE.pth"
+# echo "    $TGT: $PARA_TGT_TRAIN_BPE.pth"
+# echo "Parallel validation data:"
+# echo "    $SRC: $PARA_SRC_VALID_BPE.pth"
+# echo "    $TGT: $PARA_TGT_VALID_BPE.pth"
+# echo "Parallel test data:"
+# echo "    $SRC: $PARA_SRC_TEST_BPE.pth"
+# echo "    $TGT: $PARA_TGT_TEST_BPE.pth"
+# echo ""
