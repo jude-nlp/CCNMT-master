@@ -162,8 +162,6 @@ def get_parser():
     # training coefficients
     parser.add_argument("--lambda_mlm", type=str, default="1",
                         help="Prediction coefficient (MLM)")
-    parser.add_argument("--lambda_align", type=str, default="1",
-                        help="Prediction coefficient (ALIGN)")
     parser.add_argument("--lambda_clm", type=str, default="1",
                         help="Causal coefficient (LM)")
     parser.add_argument("--lambda_pc", type=str, default="1",
@@ -180,8 +178,6 @@ def get_parser():
                         help="Causal prediction steps (CLM)")
     parser.add_argument("--mlm_steps", type=str, default="",
                         help="Masked prediction steps (MLM / TLM)")
-    parser.add_argument("--align_steps", type=str, default="",
-                        help="align steps")
     parser.add_argument("--mt_steps", type=str, default="",
                         help="Machine translation steps")
     parser.add_argument("--ae_steps", type=str, default="",
@@ -232,6 +228,7 @@ def get_parser():
     # remove residual
     parser.add_argument("--remove_residual", type=bool_flag, default=False,
                         help="remove residual connection")
+<<<<<<< HEAD
     
     # 冻结参数
     parser.add_argument("--freeze_decoder_layer_num", type=int, default=-1,
@@ -244,6 +241,8 @@ def get_parser():
     # generate variety space
     parser.add_argument("--add_domain_tag", type=bool_flag, default=False,
                         help="add_domain_tag in decoder)")
+=======
+>>>>>>> parent of 470a5ec... align_step and n_enc_layers
 
     return parser
 
@@ -308,10 +307,6 @@ def main(params):
             # MLM steps (also includes TLM if lang2 is not None)
             for lang1, lang2 in shuf_order(params.mlm_steps, params):
                 trainer.mlm_step(lang1, lang2, params.lambda_mlm)
-            
-            # Align steps
-            for lang1, lang2 in shuf_order(params.align_steps, params):
-                trainer.align_step(lang1, lang2, params.lambda_align)
 
             # parallel classification steps
             for lang1, lang2 in shuf_order(params.pc_steps, params):
