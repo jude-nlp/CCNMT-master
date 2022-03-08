@@ -17,8 +17,8 @@ from xlm.data.loader import check_data_params, load_data
 from xlm.utils import bool_flag, initialize_exp, set_sampling_probs, shuf_order
 from xlm.model import check_model_params, build_model
 from xlm.model.memory import HashingMemory
-from xlm.trainer import SingleTrainer, EncDecTrainer
-from xlm.evaluation.evaluator import SingleEvaluator, EncDecEvaluator
+from xlm.trainer import SingleTrainer, EncDecTrainer, XlmEncDecTrainer
+from xlm.evaluation.evaluator import SingleEvaluator, EncDecEvaluator, XlmEncDecEvaluator
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -53,16 +53,14 @@ def get_parser():
     # only use an encoder (use a specific decoder for machine translation)
     parser.add_argument("--encoder_only", type=bool_flag, default=True,
                         help="Only use an encoder")
+    parser.add_argument("--double_encoder", type=bool_flag, default=True,
+                        help="use an xlm encoder as embedding")
 
     # model parameters
     parser.add_argument("--emb_dim", type=int, default=512,
                         help="Embedding layer size")
     parser.add_argument("--n_layers", type=int, default=4,
                         help="Number of Transformer layers")
-    parser.add_argument("--n_enc_layers", type=int, default=4,
-                        help="Number of Transformer Encoder layers")
-    parser.add_argument("--n_dec_layers", type=int, default=4,
-                        help="Number of Transformer Decoder layers")
     parser.add_argument("--n_heads", type=int, default=8,
                         help="Number of Transformer heads")
     parser.add_argument("--dropout", type=float, default=0,
@@ -198,6 +196,8 @@ def get_parser():
                         help="Reload pretrained word embeddings")
     parser.add_argument("--reload_model", type=str, default="",
                         help="Reload a pretrained model")
+    parser.add_argument("--reload_xlm_MT", type=str, default="",
+                        help="Reload a pretrained xlm model and NMT model")
     parser.add_argument("--reload_checkpoint", type=str, default="",
                         help="Reload a checkpoint")
 
@@ -238,10 +238,13 @@ def get_parser():
                         help="freeze decoder n layers")
     parser.add_argument("--freeze_encoder_layer_num", type=int, default=-1,
                         help="freeze encoder n layers")
+    parser.add_argument("--freeze_xlm_enc_layer_num", type=int, default=-1,
+                        help="freeze encoder n layers")
 
     # generate variety space
     parser.add_argument("--add_domain_tag", type=bool_flag, default=False,
                         help="add_domain_tag in decoder)")
+
     return parser
 
 
@@ -262,6 +265,8 @@ def main(params):
     # build model
     if params.encoder_only:
         model = build_model(params, data['dico'])
+    elif params.double_encoder:
+        xlm_enc, encoder, decoder = build_model(params, data['dico'])
     else:
         encoder, decoder = build_model(params, data['dico'])
 
@@ -269,6 +274,9 @@ def main(params):
     if params.encoder_only:
         trainer = SingleTrainer(model, data, params)
         evaluator = SingleEvaluator(trainer, data, params)
+    elif params.double_encoder:
+        trainer = XlmEncDecTrainer(xlm_enc, encoder, decoder, data, params)
+        evaluator = XlmEncDecEvaluator(trainer, data, params)
     else:
         trainer = EncDecTrainer(encoder, decoder, data, params)
         evaluator = EncDecEvaluator(trainer, data, params)

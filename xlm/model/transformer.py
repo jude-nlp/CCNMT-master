@@ -240,7 +240,7 @@ class TransformerModel(nn.Module):
 
     ATTRIBUTES = ['encoder', 'with_output', 'eos_index', 'pad_index', 'n_langs', 'n_words', 'dim', 'n_layers', 'n_heads', 'hidden_dim', 'dropout', 'attention_dropout', 'asm', 'asm_cutoffs', 'asm_div_value']
 
-    def __init__(self, params, dico, is_encoder, with_output):
+    def __init__(self, params, dico, is_encoder, with_output, is_xlm_enc=False):
         """
         Transformer model (encoder or decoder).
         """
@@ -249,6 +249,7 @@ class TransformerModel(nn.Module):
         # encoder / decoder, output layer
         self.is_encoder = is_encoder
         self.is_decoder = not is_encoder
+        self.is_xlm_enc = is_xlm_enc
         self.with_output = with_output
 
         # dictionary / languages
@@ -261,6 +262,7 @@ class TransformerModel(nn.Module):
         self.lang2id = params.lang2id
         self.use_lang_emb = getattr(params, 'use_lang_emb', True)
         self.remove_residual = params.remove_residual
+        self.just_embedding = params.just_embedding
         assert len(self.dico) == self.n_words
         assert len(self.id2lang) == len(self.lang2id) == self.n_langs
 
@@ -268,10 +270,7 @@ class TransformerModel(nn.Module):
         self.dim = params.emb_dim       # 512 by default
         self.hidden_dim = self.dim * 4  # 2048 by default
         self.n_heads = params.n_heads   # 8 by default
-        if self.is_encoder:
-            self.n_layers = params.n_enc_layers
-        else:
-            self.n_layers = params.n_dec_layers
+        self.n_layers = params.n_layers
         self.dropout = params.dropout
         self.attention_dropout = params.attention_dropout
         assert self.dim % self.n_heads == 0, 'transformer dim must be a multiple of n_heads'
@@ -284,6 +283,8 @@ class TransformerModel(nn.Module):
             self.lang_embeddings = Embedding(self.n_langs, self.dim)
         self.embeddings = Embedding(self.n_words, self.dim, padding_idx=self.pad_index)
         self.layer_norm_emb = nn.LayerNorm(self.dim, eps=1e-12)
+        if self.is_encoder and not self.is_xlm_enc:
+            self.layer_norm_xlm_output = nn.LayerNorm(self.dim, eps=1e-12)
 
         # transformer layers
         self.attentions = nn.ModuleList()
@@ -333,7 +334,7 @@ class TransformerModel(nn.Module):
         else:
             raise Exception("Unknown mode: %s" % mode)
 
-    def fwd(self, x, lengths, causal, src_enc=None, src_len=None, positions=None, langs=None, cache=None):
+    def fwd(self, x, lengths, causal, xlm_enc=None, src_enc=None, src_len=None, positions=None, langs=None, cache=None):
         """
         Inputs:
             `x` LongTensor(slen, bs), containing word indices
@@ -384,13 +385,18 @@ class TransformerModel(nn.Module):
             attn_mask = attn_mask[:, -_slen:]
 
         # embeddings
-        tensor = self.embeddings(x)
-        tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
-        if langs is not None and self.use_lang_emb:
-            tensor = tensor + self.lang_embeddings(langs)
-        tensor = self.layer_norm_emb(tensor)
-        tensor = F.dropout(tensor, p=self.dropout, training=self.training)
-        tensor *= mask.unsqueeze(-1).to(tensor.dtype)
+        if not self.is_xlm_enc and self.is_encoder:
+            tensor = self.layer_norm_xlm_output(xlm_enc)
+            tensor = F.dropout(tensor, p=self.dropout, training=self.training)
+            # tensor *= mask.unsqueeze(-1).to(tensor.dtype)
+        else:
+            tensor = self.embeddings(x)
+            tensor = tensor + self.position_embeddings(positions).expand_as(tensor)
+            if langs is not None and self.use_lang_emb:
+                tensor = tensor + self.lang_embeddings(langs)
+            tensor = self.layer_norm_emb(tensor)
+            tensor = F.dropout(tensor, p=self.dropout, training=self.training)
+            tensor *= mask.unsqueeze(-1).to(tensor.dtype)
 
         # transformer layers
         for i in range(self.n_layers):

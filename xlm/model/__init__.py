@@ -137,7 +137,100 @@ def build_model(params, dico):
         logger.info("Number of parameters (model): %i" % sum([p.numel() for p in model.parameters() if p.requires_grad]))
 
         return model.cuda()
+    elif params.double_encoder:
+        # build
+        xlm_enc = TransformerModel(params, dico, is_encoder=True, with_output=True, is_xlm_enc=True)
+        encoder = TransformerModel(params, dico, is_encoder=True, with_output=True)  # TODO: only output when necessary - len(params.clm_steps + params.mlm_steps) > 0
+        decoder = TransformerModel(params, dico, is_encoder=False, with_output=True)
 
+        # reload a pretrained model
+        if params.reload_model != '':
+            enc_path, dec_path = params.reload_model.split(',')
+            assert not (enc_path == '' and dec_path == '')
+
+            # reload encoder
+            if enc_path != '':
+                logger.info("Reloading encoder from %s ..." % enc_path)
+                enc_reload = torch.load(enc_path, map_location=lambda storage, loc: storage.cuda(params.local_rank))
+                enc_reload = enc_reload['model' if 'model' in enc_reload else 'encoder']
+                if all([k.startswith('module.') for k in enc_reload.keys()]):
+                    enc_reload = {k[len('module.'):]: v for k, v in enc_reload.items()}
+                enc_reload['layer_norm_xlm_output.weight'] = encoder.state_dict()['layer_norm_xlm_output.weight']
+                enc_reload['layer_norm_xlm_output.bias'] = encoder.state_dict()['layer_norm_xlm_output.bias']
+                encoder.load_state_dict(enc_reload)
+
+            # reload decoder
+            if dec_path != '':
+                logger.info("Reloading decoder from %s ..." % dec_path)
+                dec_reload = torch.load(dec_path, map_location=lambda storage, loc: storage.cuda(params.local_rank))
+                dec_reload = dec_reload['model' if 'model' in dec_reload else 'decoder']
+                if all([k.startswith('module.') for k in dec_reload.keys()]):
+                    dec_reload = {k[len('module.'):]: v for k, v in dec_reload.items()}
+                for i in range(params.n_layers):
+                    for name in DECODER_ONLY_PARAMS:
+                        if name % i not in dec_reload:
+                            logger.warning("Parameter %s not found." % (name % i))
+                            dec_reload[name % i] = decoder.state_dict()[name % i]
+                decoder.load_state_dict(dec_reload)
+
+        # reload a xlm model
+        if params.reload_xlm_MT != '':
+            xlm_path = params.reload_xlm_MT.strip()
+            assert not (xlm_path == '')
+
+            # reload encoder
+            logger.info("Reloading xlm_enc from %s ..." % xlm_path)
+            xlm_reload = torch.load(xlm_path, map_location=lambda storage, loc: storage.cuda(params.local_rank))
+            xlm_reload = xlm_reload['model']
+            if all([k.startswith('module.') for k in xlm_reload.keys()]):
+                xlm_reload = {k[len('module.'):]: v for k, v in xlm_reload.items()}
+            xlm_enc.load_state_dict(xlm_reload)
+
+        logger.info("xlm_enc: {}".format(xlm_enc))
+        logger.info("Encoder: {}".format(encoder))
+        logger.info("Decoder: {}".format(decoder))
+        logger.info("Number of parameters (encoder): %i" % sum([p.numel() for p in encoder.parameters() if p.requires_grad]))
+        logger.info("Number of parameters (decoder): %i" % sum([p.numel() for p in decoder.parameters() if p.requires_grad]))
+
+        # 冻结参数
+        # 依据指定超参数冻结
+        if params.freeze_xlm_enc_layer_num != -1:
+            for k, p in xlm_enc.named_parameters():
+                # logger.info("%s:%s" % (k, p.requires_grad))
+                split = k.split('.')
+                if split[0] == 'position_embeddings' or split[0] == 'lang_embeddings' or split[0] == 'embeddings' or split[0] == 'layer_norm_emb': # 冻结Embedding层
+                    p.requires_grad = False
+                    # continue
+                if len(split[1]) == 1 and int(split[1]) < params.freeze_xlm_enc_layer_num:
+                # if len(split[1]) == 1 and int(split[1]) in [0, 1, 2, 3, 5]:
+                    p.requires_grad = False
+            # logger.info("after set encoder requires_grad to False")
+            # for k, p in encoder.named_parameters():
+            #     logger.info("%s:%s" % (k, p.requires_grad))
+        if params.freeze_encoder_layer_num != -1:
+            for k, p in encoder.named_parameters():
+                # logger.info("%s:%s" % (k, p.requires_grad))
+                split = k.split('.')
+                # if split[0] == 'position_embeddings' or split[0] == 'lang_embeddings' or split[0] == 'embeddings' or split[0] == 'layer_norm_emb': # 冻结Embedding层
+                #     p.requires_grad = False
+                    # continue
+                if len(split[1]) == 1 and int(split[1]) < params.freeze_encoder_layer_num:
+                # if len(split[1]) == 1 and int(split[1]) in [0, 1, 2, 3, 5]:
+                    p.requires_grad = False
+            # logger.info("after set encoder requires_grad to False")
+            # for k, p in encoder.named_parameters():
+            #     logger.info("%s:%s" % (k, p.requires_grad))
+        if params.freeze_decoder_layer_num != -1:
+            for k, p in decoder.named_parameters():
+                # logger.info("%s:%s" % (k, p.requires_grad))
+                split = k.split('.')
+                if len(split[1]) == 1 and int(split[1]) < params.freeze_decoder_layer_num:
+                    p.requires_grad = False
+            # logger.info("after set decoder requires_grad to False")
+            # for k, p in decoder.named_parameters():
+            #     logger.info("%s:%s" % (k, p.requires_grad))
+
+        return xlm_enc.cuda(), encoder.cuda(), decoder.cuda()
     else:
         # build
         encoder = TransformerModel(params, dico, is_encoder=True, with_output=True)  # TODO: only output when necessary - len(params.clm_steps + params.mlm_steps) > 0
@@ -161,11 +254,6 @@ def build_model(params, dico):
                 enc_reload = enc_reload['model' if 'model' in enc_reload else 'encoder']
                 if all([k.startswith('module.') for k in enc_reload.keys()]):
                     enc_reload = {k[len('module.'):]: v for k, v in enc_reload.items()}
-                for i in range(params.n_enc_layers):
-                    for name in TRANSFORMER_LAYER_PARAMS:
-                        if name % i not in enc_reload:
-                            logger.warning("Parameter %s not found." % (name % i))
-                            enc_reload[name % i] = encoder.state_dict()[name % i]
                 encoder.load_state_dict(enc_reload)
 
             # reload decoder
@@ -175,7 +263,7 @@ def build_model(params, dico):
                 dec_reload = dec_reload['model' if 'model' in dec_reload else 'decoder']
                 if all([k.startswith('module.') for k in dec_reload.keys()]):
                     dec_reload = {k[len('module.'):]: v for k, v in dec_reload.items()}
-                for i in range(params.n_dec_layers):
+                for i in range(params.n_layers):
                     for name in DECODER_ONLY_PARAMS:
                         if name % i not in dec_reload:
                             logger.warning("Parameter %s not found." % (name % i))
